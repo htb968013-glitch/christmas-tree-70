@@ -1,0 +1,15 @@
+{
+  "photos": [
+    { "url": "./photo01.jpg", "name": "小嘟嘟 · 01" },
+    { "url": "./photo02.jpg", "name": "小嘟嘟 · 02" },
+    { "url": "./photo03.jpg", "name": "小嘟嘟 · 03" },
+    { "url": "./photo04.jpg", "name": "小嘟嘟 · 04" },
+    { "url": "./photo05.jpg", "name": "小嘟嘟 · 05" },
+    { "url": "./photo06.jpg", "name": "小嘟嘟 · 06" },
+    { "url": "./photo07.jpg", "name": "小嘟嘟 · 07" },
+    { "url": "./photo08.jpg", "name": "小嘟嘟 · 08" },
+    { "url": "./photo09.jpg", "name": "小嘟嘟 · 09" },
+    { "url": "./photo10.jpg", "name": "小嘟嘟 · 10" },
+    { "url": "./photo11.jpg", "name": "小嘟嘟 · 11" }
+  ]
+}
