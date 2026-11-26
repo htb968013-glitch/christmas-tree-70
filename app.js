@@ -106,6 +106,10 @@ let lastPalmAngleTime = 0;
 let smoothSpin = 0;
 let okPrev = false;          // 上一帧 OK 状态，用于边沿触发
 let okCooldownUntil = 0;     // OK 触发冷却
+
+let pinchPrev = false;
+let pinchCooldownUntil = 0;
+let pinchPhotoCursor = 0;
 let currentLandmarks = [];  // 当前帧手部关键点，供全屏追踪可视化使用
 let leadHandIdx = 0;        // 主导手索引（做「9」手势检测用）
 let trackingVisible = true; // 全屏追踪可视化开关（V 键切换）
@@ -397,8 +401,8 @@ function classifyHand(lm, handIdx) {
   const tHand = performance.now();
   const wasPinch = pinchStates[handIdx];
   // 严格进入 / 宽松保持；宽松保持超过 HYST_HOLD_MS 未再满足严格条件 → 强制过期
-  const pinchStrict = pinchRatio < 0.38;
-  let pinch = wasPinch ? pinchRatio < 0.55 : pinchStrict;
+  const pinchStrict = pinchRatio < 0.44;
+  let pinch = wasPinch ? pinchRatio < 0.58 : pinchStrict;
   if (pinchStrict) pinchSince[handIdx] = tHand;
   else if (wasPinch && tHand - pinchSince[handIdx] > HYST_HOLD_MS) pinch = false;
   if (fingersCurled) pinch = false;          // 握拳优先，绝不判为捏合
@@ -408,7 +412,7 @@ function classifyHand(lm, handIdx) {
   //   判据：圈(拇指食指近) + 中无小三指伸直 + 食指相对弯曲（凑向拇指成圈）。
   //   带迟滞防止抖动。
   const ringClosed = pinchRatio < 0.55;                 // 拇指食指成圈
-  const threeFingersUp = exts[1] > 0.52 && exts[2] > 0.52 && exts[3] > 0.52;
+  const threeFingersUp = exts[1] > 0.65 && exts[2] > 0.65 && exts[3] > 0.65;
   const okCircle = ringClosed && threeFingersUp;
   const wasOk = okStates[handIdx];
   const okStrict = okCircle;
@@ -474,6 +478,8 @@ function updateGesture(results) {
     gesture.spin = smoothSpin;
     gesture.spinActive = false;
     gesture.ok = false;
+        pinchPrev = false;
+
     okPrev = false;
     lastPalmAngle = null;
     pointStates[0] = pointStates[1] = false;
@@ -564,6 +570,33 @@ function updateGesture(results) {
   gesture.pointY = pointer.index.y;
   gesture.pinchX = mx(pincer.pinchPoint);
   gesture.pinchY = pincer.pinchPoint.y;
+    // 捏手指：边沿触发打开/放大最近或轮播下一张照片
+  const pinchNow = Boolean(gesture.pinch);
+  if (pinchNow && !pinchPrev && tNow >= pinchCooldownUntil) {
+    pinchCooldownUntil = tNow + 1200;
+    if (photos && photos.length > 0) {
+      let targetRec = null;
+      const visiblePhotos = getScreenPhotos();
+      let bestDist = 0.26;
+      for (const p of visiblePhotos) {
+        const d = Math.hypot(p.nx - gesture.pinchX, p.ny - gesture.pinchY);
+        if (d < bestDist) {
+          bestDist = d;
+          const matched = photos.find((item) => item.id === p.id);
+          if (matched) targetRec = matched;
+        }
+      }
+      if (!targetRec) {
+        targetRec = photos[pinchPhotoCursor++ % photos.length];
+      }
+      if (targetRec) {
+        pulsePhoto(targetRec.id);
+        openViewer(targetRec);
+      }
+    }
+  }
+  pinchPrev = pinchNow;
+
   gesture.palmX = mx(pointer.palm.x);
   gesture.palmY = pointer.palm.y;
 
