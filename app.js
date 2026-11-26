@@ -107,11 +107,6 @@ let smoothSpin = 0;
 let okPrev = false;          // 上一帧 OK 状态，用于边沿触发
 let okCooldownUntil = 0;     // OK 触发冷却
 
-let pinchPrev = false;
-let pinchCooldownUntil = 0;
-let pinchPhotoCursor = 0;
-let pinchReleaseTimer = null;
-let pinchViewerActive = false; let lastPinchPhotoId = null;
 let currentLandmarks = [];  // 当前帧手部关键点，供全屏追踪可视化使用
 let leadHandIdx = 0;        // 主导手索引（做「9」手势检测用）
 let trackingVisible = true; // 全屏追踪可视化开关（V 键切换）
@@ -141,7 +136,7 @@ function resetGestureState() {
   lastPalmAngleTime = 0;
   smoothSpin = 0;
   smoothOpenness = 0;
-  pinchPrev = false; pinchCooldownUntil = 0; clearTimeout(pinchReleaseTimer); pinchReleaseTimer = null; pinchViewerActive = false; lastPinchPhotoId = null; resetRecognition();           // 清 ML 侧预测/保持/边沿
+  resetRecognition();           // 清 ML 侧预测/保持/边沿
   showToast("识别状态已重置 · 请重新摆手势", 1500);
 }
 
@@ -399,22 +394,22 @@ function classifyHand(lm, handIdx) {
   // 这是修复「握拳被误判为捏合」的关键：握拳时拇指搭在食指上距离也很近，
   // 但握拳的三指 exts 都很低；真正的捏合/OK 其余三指是伸开的。
   const pinchRatio = dist2(lm[4], lm[8]) / scale;
-  const isFullFist = exts[0] < 0.35 && othersAvg < 0.30; // 仅五指紧握成拳才抑制捏合
+  const fingersCurled = othersAvg < 0.34;   // 其余三指基本都弯着 → 视为握拳倾向
   const tHand = performance.now();
   const wasPinch = pinchStates[handIdx];
   // 严格进入 / 宽松保持；宽松保持超过 HYST_HOLD_MS 未再满足严格条件 → 强制过期
-  const pinchStrict = pinchRatio < 0.48;
-  let pinch = wasPinch ? pinchRatio < 0.62 : pinchStrict;
+  const pinchStrict = pinchRatio < 0.38;
+  let pinch = wasPinch ? pinchRatio < 0.55 : pinchStrict;
   if (pinchStrict) pinchSince[handIdx] = tHand;
   else if (wasPinch && tHand - pinchSince[handIdx] > HYST_HOLD_MS) pinch = false;
-  if (isFullFist) pinch = false;             // 完整握拳优先，允许三指自然微曲时对捏
+  if (fingersCurled) pinch = false;          // 握拳优先，绝不判为捏合
   pinchStates[handIdx] = pinch;
 
   // 标准 OK 手势：拇指(4)+食指(8)捏成圈，中指(12)/无名指(16)/小指(20)三指伸直向上。
   //   判据：圈(拇指食指近) + 中无小三指伸直 + 食指相对弯曲（凑向拇指成圈）。
   //   带迟滞防止抖动。
   const ringClosed = pinchRatio < 0.55;                 // 拇指食指成圈
-  const threeFingersUp = exts[1] > 0.65 && exts[2] > 0.65 && exts[3] > 0.65;
+  const threeFingersUp = exts[1] > 0.52 && exts[2] > 0.52 && exts[3] > 0.52;
   const okCircle = ringClosed && threeFingersUp;
   const wasOk = okStates[handIdx];
   const okStrict = okCircle;
@@ -480,8 +475,6 @@ function updateGesture(results) {
     gesture.spin = smoothSpin;
     gesture.spinActive = false;
     gesture.ok = false;
-    pinchPrev = false; if (pinchViewerActive) { clearTimeout(pinchReleaseTimer); pinchReleaseTimer = null; pinchViewerActive = false; closeViewer(); }
-
     okPrev = false;
     lastPalmAngle = null;
     pointStates[0] = pointStates[1] = false;
@@ -500,7 +493,7 @@ function updateGesture(results) {
   for (let i = hs.length; i < 2; i++) { pinchStates[i] = false; pointStates[i] = false; okStates[i] = false; }
 
   // 平滑张合度与缩放，消除识别抖动
-  const scatterHands = hs.length >= 2 ? hs.filter((h) => !h.pinch) : hs; const openSource = scatterHands.length > 0 ? scatterHands : hs; const rawOpenness = openSource.reduce((s, h) => s + h.openness, 0) / openSource.length;
+  const rawOpenness = hs.reduce((s, h) => s + h.openness, 0) / hs.length;
   smoothOpenness += (rawOpenness - smoothOpenness) * 0.32;
   gesture.openness = smoothOpenness;
   const okNow = hs.some(h => h.ok);
@@ -572,32 +565,6 @@ function updateGesture(results) {
   gesture.pointY = pointer.index.y;
   gesture.pinchX = mx(pincer.pinchPoint);
   gesture.pinchY = pincer.pinchPoint.y;
-    // 捏手指：边沿触发打开/放大最近或轮播下一张照片
-  const pinchNow = Boolean(gesture.pinch); if (pinchNow && pinchReleaseTimer) { clearTimeout(pinchReleaseTimer); pinchReleaseTimer = null; }
-  if (pinchNow && !pinchPrev && tNow >= pinchCooldownUntil) {
-    pinchCooldownUntil = tNow + 320;
-    if (photos && photos.length > 0) {
-      let targetRec = null;
-      const visiblePhotos = getScreenPhotos();
-      let bestDist = 0.26;
-      for (const p of visiblePhotos) {
-        const d = Math.hypot(p.nx - gesture.pinchX, p.ny - gesture.pinchY);
-        if (d < bestDist) {
-          /* defer bestDist */
-          const matched = photos.find((item) => item.id === p.id);
-          if (matched && (photos.length === 1 || matched.id !== lastPinchPhotoId)) { bestDist = d; targetRec = matched; }
-        }
-      }
-      if (!targetRec) {
-        targetRec = photos[pinchPhotoCursor++ % photos.length]; if (photos.length > 1 && targetRec.id === lastPinchPhotoId) targetRec = photos[pinchPhotoCursor++ % photos.length];
-      }
-      if (targetRec) {
-        pulsePhoto(targetRec.id);
-        openViewer(targetRec, true); pinchViewerActive = true; lastPinchPhotoId = targetRec.id;
-      }
-    }
-  }
-  if (pinchNow && pinchViewerActive) { clearTimeout(viewerAutoCloseTimer); } else if (!pinchNow && pinchViewerActive && !pinchReleaseTimer) { pinchReleaseTimer = setTimeout(() => { pinchReleaseTimer = null; if (!gesture.pinch && pinchViewerActive) { pinchViewerActive = false; closeViewer(); } }, 120); } pinchPrev = pinchNow;
 
   gesture.palmX = mx(pointer.palm.x);
   gesture.palmY = pointer.palm.y;
@@ -956,9 +923,9 @@ const VIEWER_ENTRANCES = [
   ], { duration: 980, easing: "cubic-bezier(0.22,1,0.36,1)", fill: "forwards" }),
 ];
 
-function openViewer(rec, holdByGesture = false) {
+function openViewer(rec) {
   if (!rec) return;
-  if (viewerState.open && viewerState.id === rec.id) { if (holdByGesture) clearTimeout(viewerAutoCloseTimer); return; }
+  if (viewerState.open && viewerState.id === rec.id) return;
   closeViewer(true);
 
   els.viewerImage.src = rec.src;
@@ -980,7 +947,7 @@ function openViewer(rec, holdByGesture = false) {
 
   // 展示后自动关闭，无需手动点
   clearTimeout(viewerAutoCloseTimer);
-  if (!holdByGesture) viewerAutoCloseTimer = setTimeout(() => {
+  viewerAutoCloseTimer = setTimeout(() => {
     if (viewerState.open && viewerState.id === rec.id) closeViewer();
   }, VIEWER_SHOW_MS);
 }
