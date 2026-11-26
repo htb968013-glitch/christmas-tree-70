@@ -211,8 +211,8 @@ bus.on("ui:toast", ({ msg, dur }) => showToast(msg, dur));
 /* ============================================================
    一·五、题字（To: xxx）—— 编辑 / 自适应字号 / 本地保存
    ============================================================ */
-const DEDICATION_KEY = "xmas-dedication-v1";
-let dedicationText = "亲爱的";
+const DEDICATION_KEY = "xmas-dedication-v2";
+let dedicationText = "小嘟嘟";
 
 // 依据字数与中文占比计算合适的字号，保证长文本不会撑破容器或遮挡圣诞树
 function fitName(el, text) {
@@ -288,8 +288,8 @@ window.addEventListener("resize", () => {
 
 // 初始化：读取本地保存的题字
 (() => {
-  let saved = "亲爱的";
-  try { saved = localStorage.getItem(DEDICATION_KEY) ?? "亲爱的"; } catch (e) { /* 忽略 */ }
+  let saved = "小嘟嘟";
+  try { saved = localStorage.getItem(DEDICATION_KEY) ?? "小嘟嘟"; } catch (e) { /* 忽略 */ }
   applyDedication(saved);
 })();
 
@@ -1085,7 +1085,7 @@ async function loadLocalPhotos() {
   if (localPhotosLoaded) return;
   localPhotosLoaded = true;
   try {
-    const res = await fetch("./api/photos");
+    let res = await fetch("./api/photos").catch(() => null); if (!res || !res.ok) res = await fetch("./photos.json");
     if (!res.ok) return;
     const data = await res.json();
     const list = Array.isArray(data.photos) ? data.photos : [];
