@@ -107,6 +107,8 @@ let smoothSpin = 0;
 let okPrev = false;          // 上一帧 OK 状态，用于边沿触发
 let okCooldownUntil = 0;     // OK 触发冷却
 let pinchPrev = false, pinchCooldownUntil = 0, pinchPhotoCursor = 0, pinchReleaseTimer = null, pinchViewerActive = false, lastPinchPhotoId = null;
+let pinchHoldStart = 0;
+let pinchTriggeredThisHold = false;
 
 let currentLandmarks = [];  // 当前帧手部关键点，供全屏追踪可视化使用
 let leadHandIdx = 0;        // 主导手索引（做「9」手势检测用）
@@ -135,6 +137,8 @@ function resetGestureState() {
   okCooldownUntil = 0;
   pinchPrev = false;
   pinchCooldownUntil = 0;
+  pinchHoldStart = 0;
+  pinchTriggeredThisHold = false;
   pinchPhotoCursor = 0;
   clearTimeout(pinchReleaseTimer);
   pinchReleaseTimer = null;
@@ -198,6 +202,8 @@ bus.on("ui:reset-gesture", () => {
   okCooldownUntil = 0;
   pinchPrev = false;
   pinchCooldownUntil = 0;
+  pinchHoldStart = 0;
+  pinchTriggeredThisHold = false;
   pinchPhotoCursor = 0;
   clearTimeout(pinchReleaseTimer);
   pinchReleaseTimer = null;
@@ -409,15 +415,15 @@ function classifyHand(lm, handIdx) {
   // 这是修复「握拳被误判为捏合」的关键：握拳时拇指搭在食指上距离也很近，
   // 但握拳的三指 exts 都很低；真正的捏合/OK 其余三指是伸开的。
   const pinchRatio = dist2(lm[4], lm[8]) / scale;
-  const isFullFist = exts[0] < 0.35 && othersAvg < 0.30;   // 五指整体紧握成拳才抑制捏合
+  const isFistLike = openness < 0.42 || othersAvg < 0.42 || exts[0] < 0.45;
   const tHand = performance.now();
   const wasPinch = pinchStates[handIdx];
   // 严格进入 / 宽松保持；宽松保持超过 HYST_HOLD_MS 未再满足严格条件 → 强制过期
-  const pinchStrict = pinchRatio < 0.48;
-  let pinch = wasPinch ? pinchRatio < 0.62 : pinchStrict;
+  const pinchStrict = pinchRatio < 0.35;
+  let pinch = wasPinch ? pinchRatio < 0.46 : pinchStrict;
   if (pinchStrict) pinchSince[handIdx] = tHand;
   else if (wasPinch && tHand - pinchSince[handIdx] > HYST_HOLD_MS) pinch = false;
-  if (isFullFist) pinch = false;             // 完整握拳优先，绝不判为捏合
+  if (isFistLike) pinch = false;             // 握拳/食指卷曲/三指收拢绝不判为捏合
   pinchStates[handIdx] = pinch;
 
   // 标准 OK 手势：拇指(4)+食指(8)捏成圈，中指(12)/无名指(16)/小指(20)三指伸直向上。
@@ -490,6 +496,8 @@ function updateGesture(results) {
     gesture.spin = smoothSpin;
     gesture.spinActive = false;
     gesture.ok = false;
+    pinchHoldStart = 0;
+    pinchTriggeredThisHold = false;
     pinchPrev = false;
     clearTimeout(pinchReleaseTimer);
     pinchReleaseTimer = null;
@@ -587,13 +595,14 @@ function updateGesture(results) {
   gesture.pinchX = mx(pincer.pinchPoint);
   gesture.pinchY = pincer.pinchPoint.y;
 
-  const tPinch = now();
-  if (gesture.pinch) {
+  const pinchNow = gesture.pinch;
+  if (pinchNow) {
     if (pinchReleaseTimer) {
       clearTimeout(pinchReleaseTimer);
       pinchReleaseTimer = null;
     }
-    if (!pinchPrev && tPinch > pinchCooldownUntil && photos.length > 0) {
+    if (!pinchHoldStart) pinchHoldStart = tNow;
+    if (!pinchTriggeredThisHold && (tNow - pinchHoldStart >= 140) && tNow >= pinchCooldownUntil && photos.length > 0) {
       let idx = pinchPhotoCursor % photos.length;
       if (photos.length > 1 && photos[idx].id === lastPinchPhotoId) {
         idx = (idx + 1) % photos.length;
@@ -601,21 +610,26 @@ function updateGesture(results) {
       const targetRec = photos[idx];
       pinchPhotoCursor = (idx + 1) % photos.length;
       lastPinchPhotoId = targetRec.id;
-      pinchCooldownUntil = tPinch + 320;
+      pinchTriggeredThisHold = true;
+      pinchCooldownUntil = tNow + 450;
       pulsePhoto(targetRec.id);
       openViewer(targetRec, true);
       pinchViewerActive = true;
     }
-  } else if (pinchPrev && pinchViewerActive && !pinchReleaseTimer) {
-    pinchReleaseTimer = setTimeout(() => {
-      pinchReleaseTimer = null;
-      if (!gesture.pinch && pinchViewerActive) {
-        closeViewer();
-        pinchViewerActive = false;
-      }
-    }, 120);
+  } else {
+    pinchHoldStart = 0;
+    pinchTriggeredThisHold = false;
+    if (pinchViewerActive && !pinchReleaseTimer) {
+      pinchReleaseTimer = setTimeout(() => {
+        pinchReleaseTimer = null;
+        if (!gesture.pinch && pinchViewerActive) {
+          closeViewer();
+          pinchViewerActive = false;
+        }
+      }, 120);
+    }
   }
-  pinchPrev = gesture.pinch;
+  pinchPrev = pinchNow;
 
   gesture.palmX = mx(pointer.palm.x);
   gesture.palmY = pointer.palm.y;
